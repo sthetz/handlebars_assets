@@ -115,16 +115,14 @@ module HandlebarsAssets
       # remove trailing \n on file, for some reason the directives pipeline adds this
       source.chomp!($/)
 
-      compile_ember(source)
-
       # handle the case of multiple frameworks combined with ember
       # DEFER: use extension setup for ember
-      # if (HandlebarsAssets::Config.multiple_frameworks? && @template_path.is_ember?) ||
-      #    (HandlebarsAssets::Config.ember? && !HandlebarsAssets::Config.multiple_frameworks?)
-      #   compile_ember(source)
-      # else
-      #   compile_default(source)
-      # end
+      if (HandlebarsAssets::Config.multiple_frameworks? && @template_path.is_ember?) ||
+         (HandlebarsAssets::Config.ember? && !HandlebarsAssets::Config.multiple_frameworks?)
+        compile_ember(source)
+      else
+        compile_default(source)
+      end
     end
 
     def compile_ember(source)
