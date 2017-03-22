@@ -12,15 +12,76 @@ module HandlebarsAssets
     end
   end
 
+  # Sprockets <= 3
   class HandlebarsTemplate < Tilt::Template
-
-    include Unindent
-
     def self.default_mime_type
       'application/javascript'
     end
 
     def initialize_engine
+      HandlebarsRenderer.initialize_engine
+    end
+
+    def prepare
+      @engine = renderer.choose_engine(data)
+    end
+
+    def evaluate(scope, locals, &block)
+      source = @engine.render(scope, locals, &block)
+      renderer.compile(source)
+    end
+
+    private
+
+    def renderer
+      @renderer ||= HandlebarsRenderer.new(path: @file)
+    end
+  end
+
+  # Sprockets 4
+  class HandlebarsProcessor
+
+    def self.instance
+      @instance ||= new
+    end
+
+    def self.call(input)
+      instance.call(input)
+    end
+
+    def self.cache_key
+      instance.cache_key
+    end
+
+    attr_reader :cache_key
+
+    def initialize(options = {})
+      @cache_key = [self.class.name, ::HandlebarsAssets::VERSION, options].freeze
+    end
+
+    def call(input)
+      renderer = HandlebarsRenderer.new(path: input[:filename])
+      engine = renderer.choose_engine(input[:data])
+      renderer.compile(engine.render)
+    end
+  end
+
+  class NoOpEngine
+    def initialize(data)
+      @data = data
+    end
+
+    def render(*args)
+      @data
+    end
+  end
+
+  class HandlebarsRenderer
+    include Unindent
+
+    def self.initialize_engine
+      return if @initialized
+
       begin
         require 'haml'
       rescue LoadError
@@ -31,28 +92,26 @@ module HandlebarsAssets
       rescue LoadError
         # slim not available
       end
+
+      @initialized = true
     end
 
-    def prepare
-      @template_path = TemplatePath.new(@file)
-      @engine =
-        if @template_path.is_haml?
-          Haml::Engine.new(data, HandlebarsAssets::Config.haml_options)
-        elsif @template_path.is_slim?
-          Slim::Template.new(HandlebarsAssets::Config.slim_options) { data }
-        else
-          nil
-        end
+    def initialize(options)
+      self.class.initialize_engine
+      @template_path = TemplatePath.new(options[:path])
     end
 
-    def evaluate(scope, locals, &block)
-      source =
-        if @engine
-          @engine.render(scope, locals, &block)
-        else
-          data
-        end
+    def choose_engine(data)
+      if @template_path.is_haml?
+        Haml::Engine.new(data, HandlebarsAssets::Config.haml_options)
+      elsif @template_path.is_slim?
+        Slim::Template.new(HandlebarsAssets::Config.slim_options) { data }
+      else
+        NoOpEngine.new(data)
+      end
+    end
 
+    def compile(source)
       # remove trailing \n on file, for some reason the directives pipeline adds this
       source.chomp!($/)
 
@@ -190,7 +249,14 @@ module HandlebarsAssets
       private
 
       def relative_path
-        @full_path.match(/.*#{HandlebarsAssets::Config.path_prefix}\/((.*\/)*([^.]*)).*$/)[1]
+        path = @full_path.match(/.*#{HandlebarsAssets::Config.path_prefix}\/((.*\/)*([^.]*)).*$/)[1]
+        if is_partial? && ::HandlebarsAssets::Config.chomp_underscore_for_partials?
+          #handle case if partial is in root level of template folder
+          path.gsub!(%r~^_~, '')
+          #handle case if partial is in a subfolder within the template folder
+          path.gsub!(%r~/_~, '/')
+        end
+        path
       end
 
       def template_name
